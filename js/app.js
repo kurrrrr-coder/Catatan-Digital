@@ -197,7 +197,33 @@ console.log("Supabase:", supabaseClient);
   function closeAll(){state.sheetOpen=state.goalSheetOpen=state.budgetSheetOpen=state.templateManageOpen=state.templateFormOpen=false;state.confirmDeleteId=null;}
   function openAdd(){resetTransactionForm();state.sheetOpen=true;render();}
   function openEdit(id){const t=state.transactions.find(x=>x.id===id);if(!t)return;state.form={type:t.type,amount:String(Math.round(t.amount)),category:t.category,desc:t.desc,date:t.date,editingId:t.id};state.sheetOpen=true;render();}
-  function deleteTransaction(id){state.transactions=state.transactions.filter(t=>t.id!==id);persist();state.confirmDeleteId=null;render();}
+  async function deleteTransaction(id) {
+  const {
+    data: { user },
+    error: userError
+  } = await supabaseClient.auth.getUser();
+
+  if (userError || !user) {
+    alert("Sesi login tidak ditemukan. Silakan login kembali.");
+    return;
+  }
+
+  const { error } = await supabaseClient
+    .from("transactions")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", user.id);
+
+  if (error) {
+    console.error("Gagal menghapus transaksi:", error);
+    alert("Gagal menghapus transaksi: " + error.message);
+    return;
+  }
+
+  state.confirmDeleteId = null;
+
+  await loadTransactionsFromSupabase();
+}
   function useTemplate(id){const t=state.templates.find(x=>x.id===id);if(!t)return;state.transactions.unshift({id:crypto.randomUUID?.()||Date.now().toString(),type:t.type,amount:t.amount,category:t.category,desc:t.desc||t.name,date:todayStr()});persist();render();}
   function deleteTemplate(id){state.templates=state.templates.filter(t=>t.id!==id);persist();render();}
 
