@@ -31,6 +31,42 @@ console.log("Supabase:", supabaseClient);
   function fmtDate(s){ const d=new Date(s+"T00:00:00"); const months=["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"]; return `${d.getDate()} ${months[d.getMonth()]}`; }
   function escapeHtml(s){ const div=document.createElement("div"); div.textContent=s??""; return div.innerHTML; }
   function persist(){ Storage.save({version:1,transactions:state.transactions,goal:state.goal,budgets:state.budgets,templates:state.templates}); }
+  async function loadTransactionsFromSupabase() {
+  const {
+    data: { user },
+    error: userError
+  } = await supabaseClient.auth.getUser();
+
+  if (userError || !user) {
+    console.error("User belum login:", userError);
+    return;
+  }
+
+  const { data, error } = await supabaseClient
+    .from("transactions")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("transaction_date", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("Gagal mengambil transaksi:", error);
+    alert("Gagal mengambil data transaksi: " + error.message);
+    return;
+  }
+
+  state.transactions = (data || []).map(t => ({
+    id: String(t.id),
+    type: t.type,
+    amount: Number(t.amount) || 0,
+    category: t.category || "Lainnya",
+    desc: t.note || t.category || "",
+    date: t.transaction_date
+  }));
+
+  state.loaded = true;
+  render();
+}
   async function logoutUser(){
   const confirmLogout = confirm("Yakin ingin keluar dari akun?");
 
@@ -92,17 +128,71 @@ console.log("Supabase:", supabaseClient);
   function fmtMonthLabel(key){const [y,m]=key.split("-").map(Number);return ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"][m-1]+" "+y;}
   function fmtDayMonth(d){return `${d.getDate()} ${["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"][d.getMonth()]}`;}
 
-  function saveTransaction(){
-    const amount=Number(state.form.amount);
-    if(!Number.isFinite(amount)||amount<=0){alert("Jumlah harus lebih dari 0.");return;}
-    if(!state.form.date){alert("Tanggal wajib diisi.");return;}
-    const payload={type:state.form.type,amount,category:state.form.category,desc:(state.form.desc||state.form.category).trim(),date:state.form.date};
-    if(state.form.editingId){
-      const i=state.transactions.findIndex(t=>t.id===state.form.editingId);
-      if(i>=0)state.transactions[i]={...state.transactions[i],...payload};
-    }else state.transactions.unshift({id:crypto.randomUUID?.()||Date.now().toString(),...payload});
-    persist(); closeAll(); resetTransactionForm(); render();
+  async function saveTransaction() {
+  const amount = Number(state.form.amount);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Jumlah harus lebih dari 0.");
+    return;
   }
+
+  if (!state.form.date) {
+    alert("Tanggal wajib diisi.");
+    return;
+  }
+
+  const {
+    data: { user },
+    error: userError
+  } = await supabaseClient.auth.getUser();
+
+  if (userError || !user) {
+    alert("Sesi login tidak ditemukan. Silakan login kembali.");
+    return;
+  }
+
+  const payload = {
+    user_id: user.id,
+    type: state.form.type,
+    amount: amount,
+    category: state.form.category,
+    note: (state.form.desc || state.form.category).trim(),
+    transaction_date: state.form.date
+  };
+
+  // EDIT TRANSAKSI
+  if (state.form.editingId) {
+    const { error } = await supabaseClient
+      .from("transactions")
+      .update(payload)
+      .eq("id", state.form.editingId)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("Gagal update:", error);
+      alert("Gagal mengubah transaksi: " + error.message);
+      return;
+    }
+  }
+
+  // TAMBAH TRANSAKSI
+  else {
+    const { error } = await supabaseClient
+      .from("transactions")
+      .insert(payload);
+
+    if (error) {
+      console.error("Gagal insert:", error);
+      alert("Gagal menyimpan transaksi: " + error.message);
+      return;
+    }
+  }
+
+  closeAll();
+  resetTransactionForm();
+
+  await loadTransactionsFromSupabase();
+}
   function resetTransactionForm(){state.form={type:"expense",amount:"",category:CATEGORIES.expense[0],desc:"",date:todayStr(),editingId:null};}
   function closeAll(){state.sheetOpen=state.goalSheetOpen=state.budgetSheetOpen=state.templateManageOpen=state.templateFormOpen=false;state.confirmDeleteId=null;}
   function openAdd(){resetTransactionForm();state.sheetOpen=true;render();}
@@ -230,5 +320,5 @@ console.log("Supabase:", supabaseClient);
     document.getElementById("tpl-form-save")?.addEventListener("click",()=>{const n=Number(state.templateForm.amount);if(!state.templateForm.name.trim()||!n||n<=0){alert("Nama dan jumlah template wajib diisi.");return;}state.templates.push({id:crypto.randomUUID?.()||Date.now().toString(),name:state.templateForm.name.trim(),type:state.templateForm.type,amount:n,category:state.templateForm.category,desc:state.templateForm.desc.trim()});persist();state.templateFormOpen=false;state.templateManageOpen=true;render();});
   }
 
-  render();
+  loadTransactionsFromSupabase();
 })();
